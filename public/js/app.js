@@ -11,18 +11,98 @@ function setStatus(message, kind = "info") {
   status.dataset.kind = kind;
 }
 function renderParcels(items) {
-  // TODO 1: выведите карточки доставок через createElement/textContent.
-  // Пустой массив должен отображаться сообщением, а не ошибкой.
+  list.replaceChildren();
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Доставки не найдены.";
+    list.appendChild(empty);
+    summary.textContent = "Всего доставок: 0";
+    return;
+  }
+  items.forEach((parcel) => {
+    const card = document.createElement("article");
+    card.className = "parcel-card";
+    const id = document.createElement("h3");
+    id.textContent = "Номер: " + parcel.id;
+    const recipient = document.createElement("p");
+    recipient.textContent = "Получатель: " + parcel.recipient;
+    const destination = document.createElement("p");
+    destination.textContent = "Город: " + parcel.destination;
+    const state = document.createElement("p");
+    state.textContent = "Статус: " + parcel.state;
+    card.append(id, recipient, destination, state);
+    list.appendChild(card);
+  });
+  summary.textContent = "Всего доставок: " + items.length;
 }
 async function loadParcels() {
-  // TODO 2: для каждого запроса создайте новый AbortController, signal и таймер 2500 мс.
-  // При новом запросе отменяйте предыдущий; serial поможет игнорировать устаревший ответ.
-  // TODO 3: различайте HTTP 503 (response.ok === false), ошибку JSON.parse/response.json(),
-  // AbortError (вручную или по тайм-ауту), сетевые ошибки.
-  // TODO 4: используйте try/catch/finally, очищайте таймер и возвращайте состояние кнопок.
-  setStatus("TODO: реализуйте безопасный запрос");
+  if (activeController) {
+    activeController.abort();
+  }
+  const requestId = ++serial;
+  const controller = new AbortController();
+  activeController = controller;
+  let timedOut = false;
+  let manuallyCancelled = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 2500);
+  cancelButton.disabled = false;
+  loadButton.disabled = false;
+  setStatus("Загрузка доставок...", "info");
+  try {
+    const mode = scenario.value;
+    const url = "/api/parcels?mode=" + encodeURIComponent(mode);
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error("HTTP_ERROR_" + response.status);
+    }
+    const data = await response.json();
+    if (!data || !Array.isArray(data.items)) {
+      throw new Error("INVALID_DATA");
+    }
+    if (requestId !== serial) return;
+    renderParcels(data.items);
+    if (data.items.length === 0) {
+      setStatus("Запрос выполнен. Доставок пока нет.", "info");
+    } else {
+      setStatus("Доставки успешно загружены!", "success");
+    }
+  } catch (error) {
+    if (requestId !== serial) return;
+    if (timedOut) {
+      setStatus("Ошибка: время ожидания истекло (2500 мс).", "error");
+    } else if (manuallyCancelled) {
+      setStatus("Запрос отменён пользователем.", "info");
+    } else if (error.message.startsWith("HTTP_ERROR_")) {
+      const code = error.message.replace("HTTP_ERROR_", "");
+      setStatus("Ошибка сервера: HTTP " + code, "error");
+    } else if (error instanceof SyntaxError) {
+      setStatus("Ошибка: сервер вернул некорректный JSON.", "error");
+    } else if (error.name === "AbortError") {
+      setStatus("Запрос отменён.", "info");
+    } else if (error.message === "Failed to fetch" ||
+               error instanceof TypeError) {
+      setStatus("Ошибка сети: не удалось связаться с сервером.", "error");
+    } else {
+      setStatus("Произошла ошибка: " + error.message, "error");
+    }
+  } finally {
+    clearTimeout(timer);
+    if (requestId === serial) {
+      cancelButton.disabled = true;
+      activeController = null;
+    }
+  }
 }
 loadButton.addEventListener("click", loadParcels);
 cancelButton.addEventListener("click", () => {
-  // TODO 5: отмените текущий запрос через activeController.abort().
+  if (activeController) {
+    manuallyCancelled = false;
+  }
 });
